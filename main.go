@@ -1,5 +1,5 @@
 package main
-// test
+
 import (
 	"image"
 	"image/color"
@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"sync"
 )
 
@@ -25,42 +26,63 @@ type WorkItem struct {
 	finalY   int
 }
 
-const (
-	posX       = -2
-	posY       = -1.2
-	height     = 2.5
-	imgWidth   = 1024
-	imgHeight  = 1024
-	pixelTotal = imgWidth * imgHeight
-	maxIter    = 1000
-	samples    = 200
-	numBlocks  = 64
-	numThreads = 16
-	ratio      = float64(imgWidth) / float64(imgHeight)
-)
+// Config holds all the parameters for generating a fractal.
+type Config struct {
+	posX       float64
+	posY       float64
+	height     float64
+	imgWidth   int
+	imgHeight  int
+	pixelTotal int
+	maxIter    int
+	samples    int
+	numBlocks  int
+	numThreads int
+	ratio      float64
+}
+
+// newConfigFromRequest parses the HTTP request to create a Config.
+// It provides default values for any missing parameters.
+func newConfigFromRequest(r *http.Request) Config {
+	cfg := Config{
+		posX:       getFloatParam(r, "posX", -2.0),
+		posY:       getFloatParam(r, "posY", -1.2),
+		height:     getFloatParam(r, "height", 2.5),
+		imgWidth:   getIntParam(r, "width", 1024),
+		imgHeight:  getIntParam(r, "height_px", 1024), // Renamed to avoid conflict with 'height'
+		maxIter:    getIntParam(r, "maxIter", 1000),
+		samples:    getIntParam(r, "samples", 50), // Reduced default for faster web responses
+		numBlocks:  getIntParam(r, "numBlocks", 64),
+		numThreads: getIntParam(r, "numThreads", 16),
+	}
+	cfg.pixelTotal = cfg.imgWidth * cfg.imgHeight
+	cfg.ratio = float64(cfg.imgWidth) / float64(cfg.imgHeight)
+	return cfg
+}
 
 // GenerateMandelbrot is the entry point for our Google Cloud Function.
 // It handles HTTP requests, generates the fractal, and returns it as a PNG image.
 func GenerateMandelbrot(w http.ResponseWriter, r *http.Request) {
-	// In a real-world scenario, we'd parse these from the request query parameters.
-	// For now, we'll use the constants.
-	log.Println("Handling request to generate Mandelbrot set...")
-	img := image.NewRGBA(image.Rect(0, 0, imgWidth, imgHeight))
+	// Parse parameters from the request URL.
+	cfg := newConfigFromRequest(r)
+	log.Printf("Handling request with config: %+v", cfg)
+
+	img := image.NewRGBA(image.Rect(0, 0, cfg.imgWidth, cfg.imgHeight))
 
 	// The concurrency pattern can be reused here.
-	workBuffer := make(chan WorkItem, numBlocks)
-	pixelBuffer := make(chan Pix, pixelTotal) // A large buffer is okay here for performance
+	workBuffer := make(chan WorkItem, cfg.numBlocks)
+	pixelBuffer := make(chan Pix, cfg.pixelTotal) // A large buffer is okay here for performance
 	var wg sync.WaitGroup
 
 	// Start worker goroutines
-	wg.Add(numThreads)
-	for i := 0; i < numThreads; i++ {
-		go workerThread(&wg, workBuffer, pixelBuffer)
+	wg.Add(cfg.numThreads)
+	for i := 0; i < cfg.numThreads; i++ {
+		go workerThread(&cfg, &wg, workBuffer, pixelBuffer)
 	}
 
 	// Start a goroutine to populate the work buffer and close it when done
 	go func() {
-		workBufferInit(workBuffer)
+		workBufferInit(&cfg, workBuffer)
 		close(workBuffer)
 	}()
 
@@ -81,40 +103,40 @@ func GenerateMandelbrot(w http.ResponseWriter, r *http.Request) {
 	log.Println("Response sent.")
 }
 
-func workBufferInit(workBuffer chan WorkItem) {
-	var sqrt = int(math.Sqrt(numBlocks))
+func workBufferInit(cfg *Config, workBuffer chan WorkItem) {
+	var sqrt = int(math.Sqrt(float64(cfg.numBlocks)))
 
 	for i := 0; i < sqrt; i++ {
 		for j := 0; j < sqrt; j++ {
 			workBuffer <- WorkItem{
-				initialX: i * (imgWidth / sqrt),
-				finalX:   (i + 1) * (imgWidth / sqrt),
-				initialY: j * (imgHeight / sqrt),
-				finalY:   (j + 1) * (imgHeight / sqrt),
+				initialX: i * (cfg.imgWidth / sqrt),
+				finalX:   (i + 1) * (cfg.imgWidth / sqrt),
+				initialY: j * (cfg.imgHeight / sqrt),
+				finalY:   (j + 1) * (cfg.imgHeight / sqrt),
 			}
 		}
 	}
 }
 
-func workerThread(wg *sync.WaitGroup, workBuffer <-chan WorkItem, pixelBuffer chan<- Pix) {
+func workerThread(cfg *Config, wg *sync.WaitGroup, workBuffer <-chan WorkItem, pixelBuffer chan<- Pix) {
 	defer wg.Done()
 
 	for workItem := range workBuffer {
 		for x := workItem.initialX; x < workItem.finalX; x++ {
 			for y := workItem.initialY; y < workItem.finalY; y++ {
 				var colorR, colorG, colorB int
-				for k := 0; k < samples; k++ {
-					a := height*ratio*((float64(x)+RandFloat64())/float64(imgWidth)) + posX
-					b := height*((float64(y)+RandFloat64())/float64(imgHeight)) + posY
-					c := pixelColor(mandelbrotIteraction(a, b, maxIter))
+				for k := 0; k < cfg.samples; k++ {
+					a := cfg.height*cfg.ratio*((float64(x)+RandFloat64())/float64(cfg.imgWidth)) + cfg.posX
+					b := cfg.height*((float64(y)+RandFloat64())/float64(cfg.imgHeight)) + cfg.posY
+					c := pixelColor(mandelbrotIteraction(a, b, cfg.maxIter))
 					colorR += int(c.R)
 					colorG += int(c.G)
 					colorB += int(c.B)
 				}
 				var cr, cg, cb uint8
-				cr = uint8(float64(colorR) / float64(samples))
-				cg = uint8(float64(colorG) / float64(samples))
-				cb = uint8(float64(colorB) / float64(samples))
+				cr = uint8(float64(colorR) / float64(cfg.samples))
+				cg = uint8(float64(colorG) / float64(cfg.samples))
+				cb = uint8(float64(colorB) / float64(cfg.samples))
 
 				pixelBuffer <- Pix{
 					x, y, cr, cg, cb,
@@ -124,6 +146,30 @@ func workerThread(wg *sync.WaitGroup, workBuffer <-chan WorkItem, pixelBuffer ch
 		}
 
 	}
+}
+
+func getIntParam(r *http.Request, name string, defaultValue int) int {
+	valStr := r.URL.Query().Get(name)
+	if valStr == "" {
+		return defaultValue
+	}
+	val, err := strconv.Atoi(valStr)
+	if err != nil {
+		return defaultValue
+	}
+	return val
+}
+
+func getFloatParam(r *http.Request, name string, defaultValue float64) float64 {
+	valStr := r.URL.Query().Get(name)
+	if valStr == "" {
+		return defaultValue
+	}
+	val, err := strconv.ParseFloat(valStr, 64)
+	if err != nil {
+		return defaultValue
+	}
+	return val
 }
 
 func mandelbrotIteraction(a, b float64, maxIter int) (float64, int) {
@@ -154,4 +200,14 @@ func pixelColor(r float64, iter int) color.RGBA {
 	}
 
 	return insideSet
+}
+
+// main function to run a local server for testing.
+// This part will not be executed when deployed as a Cloud Function.
+func main() {
+	http.HandleFunc("/", GenerateMandelbrot)
+	log.Println("Starting local server on :8080...")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatal(err)
+	}
 }
