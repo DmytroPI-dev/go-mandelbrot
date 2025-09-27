@@ -34,4 +34,4 @@ jobs:
           region: "us-central1" # Or your preferred region
           memory_mb: 256
           source_dir: "./"
-          # HTTP triggers are enabled by default
+
