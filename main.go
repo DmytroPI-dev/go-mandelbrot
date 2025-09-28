@@ -60,9 +60,9 @@ func newConfigFromRequest(r *http.Request) Config {
 	return cfg
 }
 
-// GenerateMandelbrot is the entry point for our Serverless Function.
+// GenerateMandelbrot is the entry point for our Serverless Function. Right now, it returns a png image
 // It handles HTTP requests, generates the fractal, and returns it as a binary file.
-// Refactor it to return a binary file for rendering. 
+// We need to refactor it to return a binary file for rendering. 
 func GenerateMandelbrot(w http.ResponseWriter, r *http.Request) {
 	// Parse parameters from the request URL.
 	cfg := newConfigFromRequest(r)
@@ -204,7 +204,7 @@ func pixelColor(r float64, iter int) color.RGBA {
 }
 
 // main function to run a local server for testing.
-// This part will not be executed when deployed as a Cloud Function.
+// This part will not be executed when deployed as a Lambda.
 func main() {
 	http.HandleFunc("/", GenerateMandelbrot)
 	log.Println("Starting local server on :8080...")
