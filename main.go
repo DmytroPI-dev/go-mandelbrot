@@ -60,8 +60,9 @@ func newConfigFromRequest(r *http.Request) Config {
 	return cfg
 }
 
-// GenerateMandelbrot is the entry point for our Google Cloud Function.
-// It handles HTTP requests, generates the fractal, and returns it as a PNG image.
+// GenerateMandelbrot is the entry point for our Serverless Function.
+// It handles HTTP requests, generates the fractal, and returns it as a binary file.
+// Refactor it to return a binary file for rendering. 
 func GenerateMandelbrot(w http.ResponseWriter, r *http.Request) {
 	// Parse parameters from the request URL.
 	cfg := newConfigFromRequest(r)
