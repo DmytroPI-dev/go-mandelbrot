@@ -17,3 +17,5 @@
 googleCloudCLI.sh
 lambda.zip
 bootstrap
+node_modules/
+/frontend/fractal-app/dist
