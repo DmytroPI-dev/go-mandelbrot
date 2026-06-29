@@ -67,6 +67,43 @@ Metrics:
 This keeps custom metric cardinality low. The distributed renderer can later
 reuse the same namespace with `mode=distributed`.
 
+## Viewing Metrics
+
+CloudWatch Console:
+
+1. Open CloudWatch.
+2. Go to Metrics, All metrics.
+3. Choose the `Mandelbrot/Renderer` namespace.
+4. Choose the `mode` dimension.
+5. Select `RenderSuccess`, `RenderFailure`, `RenderValidationFailure`, or
+   `RenderDurationMs` with `mode=single`.
+
+Useful CLI checks:
+
+```sh
+aws cloudwatch list-metrics \
+  --namespace Mandelbrot/Renderer \
+  --region eu-central-1 \
+  --profile default
+```
+
+```sh
+aws cloudwatch get-metric-statistics \
+  --namespace Mandelbrot/Renderer \
+  --metric-name RenderFailure \
+  --dimensions Name=mode,Value=single \
+  --statistics Sum \
+  --period 60 \
+  --start-time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --region eu-central-1 \
+  --profile default
+```
+
+`RenderValidationFailure` means the request was rejected by input validation.
+`RenderFailure` means a validated render failed internally. It is expected to be
+zero during normal operation.
+
 ## Example CloudWatch Logs Insights Queries
 
 Recent validation failures:
@@ -94,4 +131,13 @@ fields @timestamp, requestId, message, error
 | filter level in ["warn", "error"]
 | sort @timestamp desc
 | limit 50
+```
+
+Metric events:
+
+```sql
+fields @timestamp, mode, RenderSuccess, RenderFailure, RenderValidationFailure, RenderDurationMs
+| filter ispresent(_aws)
+| sort @timestamp desc
+| limit 20
 ```

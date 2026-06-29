@@ -101,9 +101,9 @@ Frontend deployment is configured as a manual workflow in
 `.github/workflows/deploy-frontend.yml`. It builds the Vite app, syncs assets to
 the Terraform-managed S3 bucket, and invalidates CloudFront using GitHub OIDC.
 
-Full Terraform/backend CD is intentionally deferred until Terraform state is
-migrated from local state to an S3 remote backend with S3 lockfile support. See
-`docs/cicd.md`.
+Full Terraform/backend CD is intentionally deferred until it has a protected
+GitHub Actions approval flow. The main Terraform stack already uses an S3
+remote backend with S3 lockfile support. See `docs/cicd.md`.
 
 ## Deploy
 
@@ -121,6 +121,14 @@ make tf-state-plan AWS_PROFILE=default AWS_REGION=eu-central-1
 make tf-state-apply AWS_PROFILE=default AWS_REGION=eu-central-1
 make tf-write-backend-config
 make tf-migrate-state
+make tf-init AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-validate AWS_PROFILE=default AWS_REGION=eu-central-1
+```
+
+On a machine where the remote backend is already configured, the shorter path
+is:
+
+```sh
 make tf-init AWS_PROFILE=default AWS_REGION=eu-central-1
 make tf-validate AWS_PROFILE=default AWS_REGION=eu-central-1
 ```
@@ -197,9 +205,9 @@ ongoing AWS usage.
 
 ## Roadmap
 
-- Add S3 remote Terraform state with S3 lockfile support so backend and
-  infrastructure deployment can move safely into GitHub Actions.
 - Implement distributed tile rendering with an orchestrator and worker Lambda.
+- Decide whether backend and infrastructure deployment should move into a
+  protected GitHub Actions workflow.
 - Add architecture diagram, screenshots, and portfolio write-up.
 
 ## Credits
