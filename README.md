@@ -176,6 +176,11 @@ curl -I \
   "$(terraform -chdir=infra/terraform output -raw api_url)?width=32&height_px=32&samples=1&maxIter=50"
 ```
 
+## Observability
+
+The Go Lambda emits structured JSON logs and low-cardinality CloudWatch metrics
+through AWS Embedded Metric Format. See `docs/observability.md`.
+
 ## Cleanup
 
 The old manual AWS deployment has been removed. The reusable ACM wildcard
@@ -194,7 +199,6 @@ ongoing AWS usage.
 
 - Add S3 remote Terraform state with S3 lockfile support so backend and
   infrastructure deployment can move safely into GitHub Actions.
-- Add structured Lambda logs and CloudWatch metrics.
 - Implement distributed tile rendering with an orchestrator and worker Lambda.
 - Add architecture diagram, screenshots, and portfolio write-up.
 

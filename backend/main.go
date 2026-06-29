@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"log"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -13,11 +12,30 @@ import (
 // handler is our new entry point. It replaces the http.HandlerFunc.
 func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	start := time.Now()
+	requestID := requestIDFromContext(ctx, request)
 
 	// Parse parameters from the Lambda event's query string.
 	cfg := newConfigFromRequest(request.QueryStringParameters)
+	baseFields := mergeLogFields(configLogFields(cfg), logFields{
+		"requestId": requestID,
+	})
+	logEvent("info", "render request received", baseFields)
+
 	if err := validateConfig(cfg); err != nil {
-		log.Printf("Invalid render request: %v", err)
+		durationMs := time.Since(start).Milliseconds()
+		fields := mergeLogFields(baseFields, logFields{
+			"durationMs": durationMs,
+			"statusCode": 400,
+			"error":      err.Error(),
+		})
+		logEvent("warn", "render validation failed", fields)
+		emitRenderMetrics(mergeLogFields(fields, logFields{
+			"RenderDurationMs":        durationMs,
+			"RenderSuccess":           0,
+			"RenderFailure":           0,
+			"RenderValidationFailure": 1,
+		}))
+
 		return events.APIGatewayProxyResponse{
 			StatusCode: 400,
 			Headers: map[string]string{
@@ -26,12 +44,24 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 			Body: err.Error(),
 		}, nil
 	}
-	log.Printf("Handling request with config: %+v", cfg)
 
 	// Generate the raw pixel data.
 	pixelBytes, err := generateFractalBytes(cfg)
 	if err != nil {
-		log.Printf("Error generating fractal: %v", err)
+		durationMs := time.Since(start).Milliseconds()
+		fields := mergeLogFields(baseFields, logFields{
+			"durationMs": durationMs,
+			"statusCode": 500,
+			"error":      err.Error(),
+		})
+		logEvent("error", "render failed", fields)
+		emitRenderMetrics(mergeLogFields(fields, logFields{
+			"RenderDurationMs":        durationMs,
+			"RenderSuccess":           0,
+			"RenderFailure":           1,
+			"RenderValidationFailure": 0,
+		}))
+
 		return events.APIGatewayProxyResponse{StatusCode: 500}, err
 	}
 
@@ -39,7 +69,19 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 	// and the IsBase64Encoded flag to be set to true.
 	encodedBody := base64.StdEncoding.EncodeToString(pixelBytes)
 
-	log.Printf("Finished generation in %v. Sending %d bytes.", time.Since(start), len(pixelBytes))
+	durationMs := time.Since(start).Milliseconds()
+	fields := mergeLogFields(baseFields, logFields{
+		"durationMs": durationMs,
+		"statusCode": 200,
+		"bytes":      len(pixelBytes),
+	})
+	logEvent("info", "render succeeded", fields)
+	emitRenderMetrics(mergeLogFields(fields, logFields{
+		"RenderDurationMs":        durationMs,
+		"RenderSuccess":           1,
+		"RenderFailure":           0,
+		"RenderValidationFailure": 0,
+	}))
 
 	// Return the response.
 	return events.APIGatewayProxyResponse{
