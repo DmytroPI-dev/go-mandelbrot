@@ -92,6 +92,18 @@ Check the active AWS identity:
 make aws-whoami AWS_PROFILE=default AWS_REGION=eu-central-1
 ```
 
+## CI/CD
+
+GitHub Actions CI is configured in `.github/workflows/ci.yml` for backend tests,
+frontend lint/build, and Terraform formatting/validation.
+
+Frontend deployment is configured as a manual workflow in
+`.github/workflows/deploy-frontend.yml`. It builds the Vite app, syncs assets to
+the Terraform-managed S3 bucket, and invalidates CloudFront using GitHub OIDC.
+
+Full Terraform/backend CD is intentionally deferred until Terraform state is
+migrated from local state to a remote backend. See `docs/cicd.md`.
+
 ## Deploy
 
 Build the Lambda package before planning Terraform:
@@ -174,8 +186,8 @@ ongoing AWS usage.
 
 ## Roadmap
 
-- Improve the frontend explorer controls and visual polish.
-- Add CI for Go tests, frontend build, and Terraform validation.
+- Add remote Terraform state so backend and infrastructure deployment can move
+  safely into GitHub Actions.
 - Add structured Lambda logs and CloudWatch metrics.
 - Implement distributed tile rendering with an orchestrator and worker Lambda.
 - Add architecture diagram, screenshots, and portfolio write-up.

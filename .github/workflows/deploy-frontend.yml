@@ -1,0 +1,68 @@
+name: Deploy Frontend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-central-1' }}
+  FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+  CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+  VITE_API_URL: ${{ vars.VITE_API_URL }}
+
+jobs:
+  deploy:
+    name: Build and deploy frontend
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check deployment variables
+        run: |
+          test -n "${FRONTEND_BUCKET}" || (echo "FRONTEND_BUCKET repository variable is required" && exit 1)
+          test -n "${CLOUDFRONT_DISTRIBUTION_ID}" || (echo "CLOUDFRONT_DISTRIBUTION_ID repository variable is required" && exit 1)
+          test -n "${VITE_API_URL}" || (echo "VITE_API_URL repository variable is required" && exit 1)
+
+      - name: Check deployment secret
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          test -n "${AWS_DEPLOY_ROLE_ARN}" || (echo "AWS_DEPLOY_ROLE_ARN secret is required" && exit 1)
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/fractal-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend/fractal-app
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend/fractal-app
+        run: npm run build
+
+      - name: Upload assets
+        run: |
+          aws s3 sync frontend/fractal-app/dist/ "s3://${FRONTEND_BUCKET}/" \
+            --region "${AWS_REGION}" \
+            --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+            --paths "/*"
