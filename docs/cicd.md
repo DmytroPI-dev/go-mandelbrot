@@ -12,7 +12,8 @@ uses GitHub OIDC to deploy already-built static assets to the Terraform-managed
 S3 bucket and invalidate CloudFront.
 
 Full infrastructure/backend CD is intentionally deferred until Terraform state
-is moved from local state into a remote backend.
+is moved from local state into a remote backend. For this project, the selected
+remote-state shape is an S3 backend with native S3 lockfile support.
 
 ## CI Workflow
 
@@ -74,14 +75,38 @@ not exist and attempt to create duplicates.
 
 Before adding infrastructure/backend CD:
 
-1. create a remote Terraform backend, likely S3 with DynamoDB locking;
+1. create a remote Terraform backend in S3 with native S3 lockfile support;
 2. migrate the existing local state into that backend;
 3. add a GitHub OIDC deployment role with the required Terraform permissions;
 4. add a plan/apply workflow with environment approval;
 5. only then allow Terraform apply from GitHub Actions.
 
+The bootstrap stack lives in `infra/terraform-state`. It creates the S3 bucket
+used for remote state. The main stack in `infra/terraform` then uses that
+bucket through a generated, ignored `backend.hcl` file with `use_lockfile =
+true`.
+
 ## Next CD Step
 
-Add Terraform-managed GitHub OIDC IAM resources or document the manual IAM setup
-in more detail, then migrate Terraform state to a remote backend. After that,
-backend packaging and Terraform apply can be safely automated.
+Apply the `infra/terraform-state` bootstrap stack, generate
+`infra/terraform/backend.hcl`, and migrate the main application state. After
+that, backend packaging and Terraform apply can be safely automated.
+
+Commands:
+
+```sh
+make tf-state-init AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-state-plan AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-state-apply AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-write-backend-config
+make tf-migrate-state
+```
+
+If the backend is already migrated and only the locking mode changed:
+
+```sh
+make tf-write-backend-config
+make tf-reconfigure-backend
+make tf-state-plan AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-state-apply AWS_PROFILE=default AWS_REGION=eu-central-1
+```

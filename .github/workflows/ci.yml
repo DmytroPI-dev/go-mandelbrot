@@ -64,13 +64,20 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Format check
-        working-directory: infra/terraform
-        run: terraform fmt -check -recursive
+        run: terraform fmt -check -recursive infra/terraform infra/terraform-state
 
-      - name: Init
+      - name: Init application stack
         working-directory: infra/terraform
         run: terraform init -backend=false
 
-      - name: Validate
+      - name: Validate application stack
         working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Init state bootstrap stack
+        working-directory: infra/terraform-state
+        run: terraform init -backend=false
+
+      - name: Validate state bootstrap stack
+        working-directory: infra/terraform-state
         run: terraform validate

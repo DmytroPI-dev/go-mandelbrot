@@ -5,6 +5,7 @@ AWS_REGION ?= eu-central-1
 ACM_REGION ?= us-east-1
 GO_BIN ?= go
 FRONTEND_DOMAIN ?= mandelbrot.i-dmytro.org
+TF_BACKEND_CONFIG ?= backend.hcl
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend/fractal-app
 BUILD_DIR := build
@@ -25,6 +26,13 @@ help:
 	@printf "  make aws-detail-inventory Write docs/aws-detail-inventory.md\n"
 	@printf "  make old-infra-cleanup-plan Show old manual AWS cleanup actions\n"
 	@printf "  make old-infra-cleanup  Delete old manual AWS infra\n"
+	@printf "  make tf-state-init      Terraform init for remote-state bootstrap\n"
+	@printf "  make tf-state-plan      Terraform plan for remote-state bootstrap\n"
+	@printf "  make tf-state-apply     Terraform apply for remote-state bootstrap\n"
+	@printf "  make tf-state-output    Show remote-state bootstrap outputs\n"
+	@printf "  make tf-write-backend-config Write infra/terraform/backend.hcl\n"
+	@printf "  make tf-migrate-state   Migrate app Terraform state to S3 backend\n"
+	@printf "  make tf-reconfigure-backend Reconfigure app Terraform backend\n"
 	@printf "  make tf-init             Terraform init in infra/terraform\n"
 	@printf "  make tf-fmt              Format Terraform files\n"
 	@printf "  make tf-validate         Validate Terraform configuration\n"
@@ -82,10 +90,45 @@ old-infra-cleanup-plan:
 old-infra-cleanup:
 	AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) CONFIRM_DELETE_OLD_MANUAL_INFRA=true ./scripts/delete-old-manual-infra.sh
 
+.PHONY: tf-state-init
+tf-state-init:
+	test -d infra/terraform-state || (echo "infra/terraform-state does not exist yet" && exit 1)
+	cd infra/terraform-state && terraform init
+
+.PHONY: tf-state-plan
+tf-state-plan:
+	test -d infra/terraform-state || (echo "infra/terraform-state does not exist yet" && exit 1)
+	cd infra/terraform-state && terraform plan -var="aws_profile=$(AWS_PROFILE)" -var="aws_region=$(AWS_REGION)"
+
+.PHONY: tf-state-apply
+tf-state-apply:
+	test -d infra/terraform-state || (echo "infra/terraform-state does not exist yet" && exit 1)
+	cd infra/terraform-state && terraform apply -var="aws_profile=$(AWS_PROFILE)" -var="aws_region=$(AWS_REGION)"
+
+.PHONY: tf-state-output
+tf-state-output:
+	test -d infra/terraform-state || (echo "infra/terraform-state does not exist yet" && exit 1)
+	cd infra/terraform-state && terraform output
+
+.PHONY: tf-write-backend-config
+tf-write-backend-config:
+	AWS_REGION=$(AWS_REGION) ./scripts/write-terraform-backend-config.sh
+
+.PHONY: tf-migrate-state
+tf-migrate-state:
+	test -f infra/terraform/$(TF_BACKEND_CONFIG) || (echo "infra/terraform/$(TF_BACKEND_CONFIG) does not exist. Run make tf-write-backend-config first." && exit 1)
+	cd infra/terraform && terraform init -migrate-state -force-copy -input=false -backend-config="$(TF_BACKEND_CONFIG)"
+
+.PHONY: tf-reconfigure-backend
+tf-reconfigure-backend:
+	test -f infra/terraform/$(TF_BACKEND_CONFIG) || (echo "infra/terraform/$(TF_BACKEND_CONFIG) does not exist. Run make tf-write-backend-config first." && exit 1)
+	cd infra/terraform && terraform init -reconfigure -input=false -backend-config="$(TF_BACKEND_CONFIG)"
+
 .PHONY: tf-init
 tf-init:
 	test -d infra/terraform || (echo "infra/terraform does not exist yet" && exit 1)
-	cd infra/terraform && terraform init
+	test -f infra/terraform/$(TF_BACKEND_CONFIG) || (echo "infra/terraform/$(TF_BACKEND_CONFIG) does not exist. Run make tf-state-apply, then make tf-write-backend-config, then make tf-migrate-state." && exit 1)
+	cd infra/terraform && terraform init -input=false -backend-config="$(TF_BACKEND_CONFIG)"
 
 .PHONY: tf-fmt
 tf-fmt:
