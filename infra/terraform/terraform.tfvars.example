@@ -1,0 +1,15 @@
+aws_profile = "default"
+aws_region  = "eu-central-1"
+acm_region  = "us-east-1"
+
+project     = "mandelbrot"
+environment = "prod"
+
+frontend_domain    = "mandelbrot.i-dmytro.org"
+certificate_domain = "*.i-dmytro.org"
+
+lambda_package_path = "../../build/lambda.zip"
+
+allowed_cors_origins = [
+  "http://localhost:5173",
+]

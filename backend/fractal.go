@@ -1,10 +1,23 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"strconv"
 	"sync"
+)
+
+const (
+	minImageDimension = 1
+	maxImageDimension = 1200
+	maxPixelTotal     = 1200 * 1200
+	minViewHeight     = 0.000001
+	maxViewHeight     = 10.0
+	maxIterations     = 5000
+	maxSamples        = 64
+	maxBlocks         = 1024
+	maxThreads        = 64
 )
 
 type Pix struct {
@@ -46,7 +59,7 @@ func newConfigFromRequest(params map[string]string) Config {
 		imgWidth:   getIntParam(params, "width", 1024),
 		imgHeight:  getIntParam(params, "height_px", 1024),
 		maxIter:    getIntParam(params, "maxIter", 1000),
-		samples:    getIntParam(params, "samples", 50),
+		samples:    getIntParam(params, "samples", 4),
 		numBlocks:  getIntParam(params, "numBlocks", 64),
 		numThreads: getIntParam(params, "numThreads", 16),
 	}
@@ -55,8 +68,46 @@ func newConfigFromRequest(params map[string]string) Config {
 	return cfg
 }
 
+func validateConfig(cfg Config) error {
+	if cfg.imgWidth < minImageDimension || cfg.imgWidth > maxImageDimension {
+		return fmt.Errorf("width must be between %d and %d", minImageDimension, maxImageDimension)
+	}
+	if cfg.imgHeight < minImageDimension || cfg.imgHeight > maxImageDimension {
+		return fmt.Errorf("height_px must be between %d and %d", minImageDimension, maxImageDimension)
+	}
+	if cfg.pixelTotal != cfg.imgWidth*cfg.imgHeight || cfg.pixelTotal > maxPixelTotal {
+		return fmt.Errorf("pixel total must not exceed %d", maxPixelTotal)
+	}
+	if cfg.height < minViewHeight || cfg.height > maxViewHeight {
+		return fmt.Errorf("height must be between %g and %g", minViewHeight, maxViewHeight)
+	}
+	if cfg.maxIter < 1 || cfg.maxIter > maxIterations {
+		return fmt.Errorf("maxIter must be between 1 and %d", maxIterations)
+	}
+	if cfg.samples < 1 || cfg.samples > maxSamples {
+		return fmt.Errorf("samples must be between 1 and %d", maxSamples)
+	}
+	if cfg.numBlocks < 1 || cfg.numBlocks > maxBlocks {
+		return fmt.Errorf("numBlocks must be between 1 and %d", maxBlocks)
+	}
+	if cfg.numThreads < 1 || cfg.numThreads > maxThreads {
+		return fmt.Errorf("numThreads must be between 1 and %d", maxThreads)
+	}
+	if math.IsNaN(cfg.posX) || math.IsInf(cfg.posX, 0) {
+		return fmt.Errorf("posX must be a finite number")
+	}
+	if math.IsNaN(cfg.posY) || math.IsInf(cfg.posY, 0) {
+		return fmt.Errorf("posY must be a finite number")
+	}
+	return nil
+}
+
 // generateFractalBytes is the main logic function, now returning a byte slice.
 func generateFractalBytes(cfg Config) ([]byte, error) {
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+
 	// Create a flat byte slice to hold RGBA values for every pixel.
 	pixels := make([]byte, cfg.imgWidth*cfg.imgHeight*4)
 
@@ -119,17 +170,33 @@ func workerThread(cfg *Config, wg *sync.WaitGroup, workBuffer <-chan WorkItem, p
 }
 
 func workBufferInit(cfg *Config, workBuffer chan WorkItem) {
-	var sqrt = int(math.Sqrt(float64(cfg.numBlocks)))
-	for i := 0; i < sqrt; i++ {
-		for j := 0; j < sqrt; j++ {
-			workBuffer <- WorkItem{
-				initialX: i * (cfg.imgWidth / sqrt),
-				finalX:   (i + 1) * (cfg.imgWidth / sqrt),
-				initialY: j * (cfg.imgHeight / sqrt),
-				finalY:   (j + 1) * (cfg.imgHeight / sqrt),
+	for _, item := range planWorkItems(*cfg) {
+		workBuffer <- item
+	}
+}
+
+func planWorkItems(cfg Config) []WorkItem {
+	gridSize := int(math.Ceil(math.Sqrt(float64(cfg.numBlocks))))
+	if gridSize < 1 {
+		gridSize = 1
+	}
+
+	items := make([]WorkItem, 0, gridSize*gridSize)
+	for xBlock := 0; xBlock < gridSize; xBlock++ {
+		for yBlock := 0; yBlock < gridSize; yBlock++ {
+			item := WorkItem{
+				initialX: xBlock * cfg.imgWidth / gridSize,
+				finalX:   (xBlock + 1) * cfg.imgWidth / gridSize,
+				initialY: yBlock * cfg.imgHeight / gridSize,
+				finalY:   (yBlock + 1) * cfg.imgHeight / gridSize,
 			}
+			if item.initialX == item.finalX || item.initialY == item.finalY {
+				continue
+			}
+			items = append(items, item)
 		}
 	}
+	return items
 }
 
 func mandelbrotIteraction(a, b float64, maxIter int) (float64, int) {
