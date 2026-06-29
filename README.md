@@ -1,13 +1,187 @@
-# Cloud-Native Mandelbrot Explorer
+# Serverless Mandelbrot Renderer on AWS
 
-This project renders the Mandelbrot set using a modern, cloud-native architecture. It features a high-performance Go backend deployed as a serverless function on Google Cloud, and an interactive React frontend for exploring the fractal.
+Portfolio-quality Mandelbrot explorer built with a Go renderer, React/Vite
+frontend, and Terraform-managed AWS infrastructure.
 
-## Architecture
+The current live architecture is a baseline serverless renderer:
 
-- **Backend**: A concurrent Go application that generates the fractal image. It's designed to be deployed as a Google Cloud Function for scalability and cost-efficiency.
-- **Frontend**: A React application (built with Chakra UI / Material Design) that provides a user interface to pan, zoom, and customize the fractal rendering.
-- **CI/CD**: Automated testing and deployment pipelines using GitHub Actions.
+- Go Lambda renders raw RGBA Mandelbrot pixels on request.
+- API Gateway HTTP API exposes the render endpoint.
+- React/Vite with Chakra UI 3 draws the returned pixel buffer into a canvas.
+- S3 stores the static frontend privately.
+- CloudFront serves the frontend with the `*.i-dmytro.org` ACM certificate.
+- Terraform manages the clean AWS stack.
+- Makefile targets wrap the build, deploy, inventory, and cleanup workflow.
 
-## Original Project
+The next portfolio phase is distributed rendering: split each image into tiles
+or bands, fan the work out across Lambda workers, assemble the result, and add
+operational metrics around duration, tile count, failures, and cost.
 
-The core parallel processing logic for Go was adapted from the [parallel-mandelbrot-go](https://github.com/daniellferreira/parallel-mandelbrot-go) project by Daniela Ferreira. This new version refactors the original desktop application into a scalable web service.
+## Demo
+
+Current demo domain:
+
+```text
+https://mandelbrot.i-dmytro.org
+```
+
+The custom domain is expected to be managed through Cloudflare DNS/proxying.
+The AWS stack itself uses CloudFront, S3, API Gateway, Lambda, IAM, CloudWatch,
+and an existing ACM wildcard certificate in `us-east-1`.
+
+## Repository Layout
+
+```text
+backend/               Go Lambda renderer
+frontend/fractal-app/  React/Vite and Chakra UI 3 Mandelbrot explorer
+infra/terraform/       AWS infrastructure
+scripts/               Build, inventory, deploy, and cleanup helpers
+plan.md                Project restoration and roadmap notes
+AGENTS.md              Local agent/project guidelines
+```
+
+Generated AWS inventory reports under `docs/aws-*.md`, Terraform state,
+frontend `dist`, `node_modules`, Lambda packages, and real `.env` files are
+ignored and should not be committed.
+
+## Requirements
+
+- Go 1.26.4
+- Node.js and npm
+- Chakra UI 3
+- Terraform
+- AWS CLI with an authenticated profile
+- Existing ACM certificate for `*.i-dmytro.org` in `us-east-1`
+
+Copy examples when local overrides are needed:
+
+```sh
+cp .env.example .env
+cp frontend/fractal-app/.env.example frontend/fractal-app/.env
+```
+
+## Common Commands
+
+Show available targets:
+
+```sh
+make help
+```
+
+Run backend tests:
+
+```sh
+make backend-test
+```
+
+Build and package the Lambda artifact:
+
+```sh
+make backend-package
+```
+
+Build the frontend:
+
+```sh
+make frontend-build
+```
+
+Check the active AWS identity:
+
+```sh
+make aws-whoami AWS_PROFILE=default AWS_REGION=eu-central-1
+```
+
+## Deploy
+
+Build the Lambda package before planning Terraform:
+
+```sh
+make backend-package
+```
+
+Initialize and validate Terraform:
+
+```sh
+make tf-init AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-validate AWS_PROFILE=default AWS_REGION=eu-central-1
+```
+
+Plan and apply the AWS stack:
+
+```sh
+make tf-plan AWS_PROFILE=default AWS_REGION=eu-central-1 ACM_REGION=us-east-1 FRONTEND_DOMAIN=mandelbrot.i-dmytro.org
+make tf-apply AWS_PROFILE=default AWS_REGION=eu-central-1 ACM_REGION=us-east-1 FRONTEND_DOMAIN=mandelbrot.i-dmytro.org
+```
+
+Configure the frontend API URL from Terraform output:
+
+```sh
+terraform -chdir=infra/terraform output -raw api_url
+```
+
+Set that value in `frontend/fractal-app/.env`:
+
+```text
+VITE_API_URL=https://example.execute-api.eu-central-1.amazonaws.com/render
+```
+
+Build and deploy frontend assets:
+
+```sh
+make frontend-build
+make deploy-frontend \
+  AWS_PROFILE=default \
+  AWS_REGION=eu-central-1 \
+  FRONTEND_BUCKET=<terraform frontend_bucket_name output> \
+  DISTRIBUTION_ID=<terraform cloudfront_distribution_id output>
+```
+
+## Verify
+
+Test the render API directly:
+
+```sh
+curl -o /tmp/fractal.bin \
+  "$(terraform -chdir=infra/terraform output -raw api_url)?width=32&height_px=32&samples=1&maxIter=50"
+
+ls -lh /tmp/fractal.bin
+```
+
+For `32x32` RGBA output, the file should be `4096` bytes.
+
+Test CORS from the frontend domain:
+
+```sh
+curl -I \
+  -H "Origin: https://mandelbrot.i-dmytro.org" \
+  "$(terraform -chdir=infra/terraform output -raw api_url)?width=32&height_px=32&samples=1&maxIter=50"
+```
+
+## Cleanup
+
+The old manual AWS deployment has been removed. The reusable ACM wildcard
+certificate was kept.
+
+To take down the current Terraform-managed demo stack:
+
+```sh
+make tf-destroy AWS_PROFILE=default AWS_REGION=eu-central-1 ACM_REGION=us-east-1 FRONTEND_DOMAIN=mandelbrot.i-dmytro.org
+```
+
+This is useful when the demo no longer needs to stay live and you want to avoid
+ongoing AWS usage.
+
+## Roadmap
+
+- Improve the frontend explorer controls and visual polish.
+- Add CI for Go tests, frontend build, and Terraform validation.
+- Add structured Lambda logs and CloudWatch metrics.
+- Implement distributed tile rendering with an orchestrator and worker Lambda.
+- Add architecture diagram, screenshots, and portfolio write-up.
+
+## Credits
+
+The original Go Mandelbrot idea was adapted from
+[parallel-mandelbrot-go](https://github.com/daniellferreira/parallel-mandelbrot-go)
+by Daniela Ferreira, then refactored into a serverless AWS portfolio project.

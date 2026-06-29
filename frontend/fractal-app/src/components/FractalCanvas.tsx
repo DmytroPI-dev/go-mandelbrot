@@ -1,187 +1,415 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Badge,
+  Box,
+  Button,
+  Field,
+  Flex,
+  Grid,
+  Heading,
+  NativeSelect,
+  SimpleGrid,
+  Stack,
+  Text,
+} from '@chakra-ui/react';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL;
+const RENDER_SIZE = 800;
+const DEFAULT_VIEWPORT = {
+  centerX: -0.75,
+  centerY: 0,
+  height: 2.5,
+};
 
-// --- FIX 1: Decouple calculation resolution from display size ---
-// We will always calculate a fractal of this size for predictable performance.
-const CALCULATION_WIDTH = 800;
-const CALCULATION_HEIGHT = 800;
+type Viewport = typeof DEFAULT_VIEWPORT;
+
+type QualityPreset = {
+  id: string;
+  label: string;
+  samples: number;
+  maxIter: number;
+};
+
+const QUALITY_PRESETS: QualityPreset[] = [
+  { id: 'draft', label: 'Draft', samples: 1, maxIter: 160 },
+  { id: 'balanced', label: 'Balanced', samples: 3, maxIter: 300 },
+  { id: 'detail', label: 'Detail', samples: 5, maxIter: 520 },
+];
+
+function parseInitialViewport(): Viewport {
+  const params = new URLSearchParams(window.location.search);
+  const centerX = params.has('x') ? Number(params.get('x')) : Number.NaN;
+  const centerY = params.has('y') ? Number(params.get('y')) : Number.NaN;
+  const height = params.has('h') ? Number(params.get('h')) : Number.NaN;
+
+  return {
+    centerX: Number.isFinite(centerX) ? centerX : DEFAULT_VIEWPORT.centerX,
+    centerY: Number.isFinite(centerY) ? centerY : DEFAULT_VIEWPORT.centerY,
+    height: Number.isFinite(height) && height > 0 ? height : DEFAULT_VIEWPORT.height,
+  };
+}
+
+function formatNumber(value: number) {
+  if (Math.abs(value) >= 1000 || Math.abs(value) < 0.01) {
+    return value.toExponential(3);
+  }
+  return value.toFixed(5);
+}
 
 export const FractalCanvas = () => {
-    const containerRef = useRef<HTMLDivElement | null>(null);
-    const highResCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const panStartRef = useRef<{ x: number; y: number } | null>(null);
 
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+  const [viewport, setViewport] = useState<Viewport>(parseInitialViewport);
+  const [qualityId, setQualityId] = useState('balanced');
+  const [isRendering, setIsRendering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [renderTimeMs, setRenderTimeMs] = useState<number | null>(null);
+  const [bytesRendered, setBytesRendered] = useState<number | null>(null);
+  const [draftOffset, setDraftOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
 
-    const [viewport, setViewport] = useState({
-        centerX: -0.75,
-        centerY: 0.0,
-        height: 2.5,
-    });
+  const quality = useMemo(
+    () => QUALITY_PRESETS.find((preset) => preset.id === qualityId) ?? QUALITY_PRESETS[1],
+    [qualityId],
+  );
 
-    const [isPanning, setIsPanning] = useState(false);
-    const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const viewportWidth = viewport.height;
+  const topLeftX = viewport.centerX - viewportWidth / 2;
+  const topLeftY = viewport.centerY - viewport.height / 2;
 
-    const fetchAndDrawFractal = useCallback(async (currentViewport: typeof viewport) => {
-        setIsLoading(true);
-        setError(null);
+  const renderFractal = useCallback(
+    async (signal: AbortSignal) => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return;
+      }
 
-        const canvas = highResCanvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        setError('Canvas rendering is not available in this browser.');
+        return;
+      }
 
-        // Use our fixed calculation size for the API call
-        const aspectRatio = CALCULATION_WIDTH / CALCULATION_HEIGHT;
-        const viewportWidth = currentViewport.height * aspectRatio;
-        const posX = currentViewport.centerX - viewportWidth / 2;
-        const posY = currentViewport.centerY - currentViewport.height / 2;
+      if (!API_URL) {
+        setError('VITE_API_URL is not configured.');
+        return;
+      }
 
-        try {
-            const requestUrl = `${API_URL}?width=${CALCULATION_WIDTH}&height_px=${CALCULATION_HEIGHT}&posX=${posX}&posY=${posY}&height=${currentViewport.height}&samples=4&maxIter=350`;
-            const response = await axios.get(requestUrl, { responseType: 'arraybuffer' });
+      setIsRendering(true);
+      setError(null);
+      setDraftOffset({ x: 0, y: 0 });
 
-            const pixelData = new Uint8ClampedArray(response.data);
-            const imageData = new ImageData(pixelData, CALCULATION_WIDTH, CALCULATION_HEIGHT);
-            ctx.putImageData(imageData, 0, 0);
+      const startedAt = performance.now();
+      const params = new URLSearchParams({
+        width: String(RENDER_SIZE),
+        height_px: String(RENDER_SIZE),
+        posX: String(topLeftX),
+        posY: String(topLeftY),
+        height: String(viewport.height),
+        samples: String(quality.samples),
+        maxIter: String(quality.maxIter),
+        numBlocks: '64',
+        numThreads: '16',
+      });
 
-            const previewCanvas = previewCanvasRef.current;
-            if (previewCanvas) {
-                previewCanvas.getContext('2d')?.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-            }
-
-        } catch (err) {
-            console.error("Failed to fetch fractal data:", err);
-            setError("Failed to load fractal. Check the console for details.");
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        const debounceTimeout = setTimeout(() => {
-            fetchAndDrawFractal(viewport);
-        }, 400);
-        return () => clearTimeout(debounceTimeout);
-    }, [viewport, fetchAndDrawFractal]);
-
-    // Set the fixed pixel buffer size for our canvases on mount
-    useEffect(() => {
-        const canvases = [highResCanvasRef.current, previewCanvasRef.current];
-        canvases.forEach(canvas => {
-            if (canvas) {
-                canvas.width = CALCULATION_WIDTH;
-                canvas.height = CALCULATION_HEIGHT;
-            }
+      try {
+        const response = await axios.get<ArrayBuffer>(`${API_URL}?${params.toString()}`, {
+          responseType: 'arraybuffer',
+          signal,
         });
-        fetchAndDrawFractal(viewport);
-    }, [fetchAndDrawFractal, viewport]);
 
-    // --- FIX 2: Manually add wheel event listener to set passive: false ---
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return;
-
-        // The handleWheel logic is now inside this useEffect
-        const handleWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            const zoomFactor = 1.2;
-            const newHeight = e.deltaY < 0 ? viewport.height / zoomFactor : viewport.height * zoomFactor;
-
-            const previewCtx = previewCanvasRef.current?.getContext('2d');
-            const highResCanvas = highResCanvasRef.current;
-            if (previewCtx && highResCanvas) {
-                const scale = newHeight > viewport.height ? 1 / zoomFactor : zoomFactor;
-                const { width, height } = previewCtx.canvas;
-                previewCtx.clearRect(0, 0, width, height);
-                previewCtx.save();
-                previewCtx.translate(width / 2, height / 2);
-                previewCtx.scale(scale, scale);
-                previewCtx.translate(-width / 2, -height / 2);
-                previewCtx.drawImage(highResCanvas, 0, 0);
-                previewCtx.restore();
-            }
-            setViewport(prev => ({ ...prev, height: newHeight }));
-        };
-
-        container.addEventListener('wheel', handleWheel, { passive: false });
-
-        return () => {
-            container.removeEventListener('wheel', handleWheel);
-        };
-    }, [viewport]); // Re-attach listener if viewport changes to get latest value
-
-    // --- Panning handlers remain mostly the same ---
-    const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        setIsPanning(true);
-        setPanStart({ x: e.clientX, y: e.clientY });
-    };
-
-    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!isPanning) return;
-        const dx = e.clientX - panStart.x;
-        const dy = e.clientY - panStart.y;
-
-        const previewCtx = previewCanvasRef.current?.getContext('2d');
-        const highResCanvas = highResCanvasRef.current;
-        if (previewCtx && highResCanvas) {
-            const { width, height } = previewCtx.canvas;
-            previewCtx.clearRect(0, 0, width, height);
-            // Scale the pan distance based on the display size vs calculation size
-            const scaleX = width / (containerRef.current?.clientWidth || 1);
-            const scaleY = height / (containerRef.current?.clientHeight || 1);
-            previewCtx.drawImage(highResCanvas, dx * scaleX, dy * scaleY);
+        const pixelData = new Uint8ClampedArray(response.data);
+        const imageData = new ImageData(pixelData, RENDER_SIZE, RENDER_SIZE);
+        ctx.putImageData(imageData, 0, 0);
+        setRenderTimeMs(Math.round(performance.now() - startedAt));
+        setBytesRendered(pixelData.byteLength);
+      } catch (err) {
+        if (axios.isCancel(err) || signal.aborted) {
+          return;
         }
+        console.error('Failed to fetch fractal data:', err);
+        setError('Render failed. Check the API endpoint and CORS configuration.');
+      } finally {
+        if (!signal.aborted) {
+          setIsRendering(false);
+        }
+      }
+    },
+    [quality.maxIter, quality.samples, topLeftX, topLeftY, viewport.height],
+  );
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    canvas.width = RENDER_SIZE;
+    canvas.height = RENDER_SIZE;
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('x', viewport.centerX.toPrecision(8));
+    params.set('y', viewport.centerY.toPrecision(8));
+    params.set('h', viewport.height.toPrecision(8));
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+  }, [viewport]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      void renderFractal(controller.signal);
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
     };
+  }, [renderFractal]);
 
-    const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!isPanning) return;
-        setIsPanning(false);
+  const zoomAt = useCallback((factor: number, clientX?: number, clientY?: number) => {
+    setViewport((current) => {
+      const stage = stageRef.current;
+      if (!stage || clientX === undefined || clientY === undefined) {
+        return { ...current, height: current.height * factor };
+      }
 
-        const dx = e.clientX - panStart.x;
-        const dy = e.clientY - panStart.y;
+      const rect = stage.getBoundingClientRect();
+      const normalizedX = (clientX - rect.left) / rect.width - 0.5;
+      const normalizedY = (clientY - rect.top) / rect.height - 0.5;
+      const beforeX = current.centerX + normalizedX * current.height;
+      const beforeY = current.centerY + normalizedY * current.height;
+      const nextHeight = current.height * factor;
 
-        const pixelsPerComplexUnit = (containerRef.current?.clientHeight || 0) / viewport.height;
-        const deltaComplexX = dx / pixelsPerComplexUnit;
-        const deltaComplexY = dy / pixelsPerComplexUnit;
+      return {
+        centerX: beforeX - normalizedX * nextHeight,
+        centerY: beforeY - normalizedY * nextHeight,
+        height: nextHeight,
+      };
+    });
+  }, []);
 
-        setViewport(prev => ({
-            ...prev,
-            centerX: prev.centerX - deltaComplexX,
-            centerY: prev.centerY - deltaComplexY,
-        }));
-    };
+  const handleWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      zoomAt(event.deltaY < 0 ? 0.82 : 1.22, event.clientX, event.clientY);
+    },
+    [zoomAt],
+  );
 
-    const zoom = (factor: number) => {
-        setViewport(prev => ({ ...prev, height: prev.height * factor }));
-    };
-    const resetView = () => {
-        setViewport({ centerX: -0.75, centerY: 0.0, height: 2.5 });
-    };
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panStartRef.current = { x: event.clientX, y: event.clientY };
+    setIsPanning(true);
+  };
 
-    return (
-        <div
-            ref={containerRef}
-            className="fractal-container"
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-        >
-            <div className="ui-overlay">
-                <button onClick={() => zoom(0.8)}>Zoom In</button>
-                <button onClick={() => zoom(1.2)}>Zoom Out</button>
-                <button onClick={resetView}>Reset View</button>
-                {isLoading && <p>Generating...</p>}
-                {error && <p style={{ color: 'red' }}>{error}</p>}
-                <p>Scale (Height): {viewport.height.toExponential(2)}</p>
-            </div>
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const panStart = panStartRef.current;
+    if (!panStart) {
+      return;
+    }
 
-            <canvas ref={highResCanvasRef} style={{ zIndex: 1, cursor: isPanning ? 'grabbing' : 'grab' }} />
-            <canvas ref={previewCanvasRef} style={{ zIndex: 2, pointerEvents: 'none' }} />
-        </div>
-    );
+    setDraftOffset({
+      x: event.clientX - panStart.x,
+      y: event.clientY - panStart.y,
+    });
+  };
+
+  const finishPan = (event: React.PointerEvent<HTMLDivElement>) => {
+    const panStart = panStartRef.current;
+    if (!panStart) {
+      return;
+    }
+
+    const stage = stageRef.current;
+    const rect = stage?.getBoundingClientRect();
+    const dx = event.clientX - panStart.x;
+    const dy = event.clientY - panStart.y;
+    const unitsPerPixel = rect ? viewport.height / rect.height : 0;
+
+    panStartRef.current = null;
+    setIsPanning(false);
+    setDraftOffset({ x: 0, y: 0 });
+    setViewport((current) => ({
+      ...current,
+      centerX: current.centerX - dx * unitsPerPixel,
+      centerY: current.centerY - dy * unitsPerPixel,
+    }));
+  };
+
+  const resetView = () => {
+    setViewport(DEFAULT_VIEWPORT);
+  };
+
+  const copyShareLink = async () => {
+    await navigator.clipboard.writeText(window.location.href);
+  };
+
+  const byteLabel = bytesRendered === null ? 'n/a' : `${(bytesRendered / 1024).toFixed(0)} KB`;
+  const timeLabel = renderTimeMs === null ? 'n/a' : `${renderTimeMs} ms`;
+  const metrics = [
+    ['Center X', formatNumber(viewport.centerX)],
+    ['Center Y', formatNumber(viewport.centerY)],
+    ['Height', viewport.height.toExponential(3)],
+    ['Iterations', String(quality.maxIter)],
+    ['Samples', String(quality.samples)],
+    ['Payload', byteLabel],
+    ['Render', timeLabel],
+  ];
+
+  return (
+    <Box
+      as="main"
+      minH="100vh"
+      p={{ base: '10px', md: '20px' }}
+      bg="#111315"
+      color="#f4f0e8"
+      backgroundImage="linear-gradient(135deg, rgba(77, 163, 126, 0.12), transparent 34%), linear-gradient(315deg, rgba(207, 124, 68, 0.12), transparent 36%)"
+    >
+      <Stack
+        as="section"
+        aria-label="Mandelbrot explorer"
+        gap="4"
+        w="min(1280px, 100%)"
+        h={{ base: 'auto', lg: 'calc(100vh - 40px)' }}
+        minH={{ base: 'calc(100vh - 20px)', md: 'calc(100vh - 40px)' }}
+        mx="auto"
+      >
+        <Flex align={{ base: 'flex-start', md: 'flex-end' }} justify="space-between" gap="4" direction={{ base: 'column', md: 'row' }}>
+          <Box>
+            <Text mb="1" color="#8fbda9" fontSize="xs" fontWeight="bold" textTransform="uppercase">
+              AWS Serverless Renderer
+            </Text>
+            <Heading as="h1" color="#fff9ee" fontSize={{ base: '3xl', md: '5xl' }} lineHeight="1">
+              Mandelbrot Explorer
+            </Heading>
+          </Box>
+          <Badge
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            minW="112px"
+            justifyContent="center"
+            px="3"
+            py="2"
+            rounded="md"
+            borderWidth="1px"
+            borderColor="whiteAlpha.200"
+            bg="rgba(23, 26, 28, 0.9)"
+            color="#d9d0c1"
+            textTransform="none"
+            fontSize="sm"
+          >
+            <Box boxSize="9px" rounded="full" bg={isRendering ? '#cf7c44' : '#4da37e'} boxShadow={`0 0 16px ${isRendering ? 'rgba(207, 124, 68, 0.9)' : 'rgba(77, 163, 126, 0.8)'}`} />
+            {isRendering ? 'Rendering' : 'Ready'}
+          </Badge>
+        </Flex>
+
+        <Grid templateColumns={{ base: '1fr', lg: '280px minmax(0, 1fr)' }} gap="4" minH="0" flex="1">
+          <Stack
+            as="aside"
+            aria-label="Render controls"
+            alignSelf="start"
+            gap="4"
+            p="4"
+            order={{ base: 2, lg: 0 }}
+            borderWidth="1px"
+            borderColor="whiteAlpha.200"
+            rounded="md"
+            bg="rgba(20, 22, 24, 0.88)"
+            boxShadow="0 18px 50px rgba(0, 0, 0, 0.22)"
+          >
+            <Field.Root>
+              <Field.Label color="#d9d0c1" fontSize="xs" fontWeight="bold" textTransform="uppercase">
+                Quality
+              </Field.Label>
+              <NativeSelect.Root>
+                <NativeSelect.Field value={qualityId} onChange={(event) => setQualityId(event.target.value)} bg="#202326" borderColor="whiteAlpha.300" color="#fff9ee">
+                  {QUALITY_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </NativeSelect.Field>
+                <NativeSelect.Indicator />
+              </NativeSelect.Root>
+            </Field.Root>
+
+            <SimpleGrid columns={2} gap="2" aria-label="Viewport actions">
+              <Button type="button" onClick={() => zoomAt(0.78)} title="Zoom in" aria-label="Zoom in" bg="#202326" borderColor="whiteAlpha.300">
+                +
+              </Button>
+              <Button type="button" onClick={() => zoomAt(1.28)} title="Zoom out" aria-label="Zoom out" bg="#202326" borderColor="whiteAlpha.300">
+                -
+              </Button>
+              <Button type="button" onClick={resetView} title="Reset view" aria-label="Reset view" bg="#202326" borderColor="whiteAlpha.300">
+                reset
+              </Button>
+              <Button type="button" onClick={() => void copyShareLink()} title="Copy share link" aria-label="Copy share link" bg="#202326" borderColor="whiteAlpha.300">
+                link
+              </Button>
+            </SimpleGrid>
+
+            <Stack gap="0" as="dl">
+              {metrics.map(([label, value], index) => (
+                <Flex
+                  key={label}
+                  as="div"
+                  justify="space-between"
+                  gap="3"
+                  py="2.5"
+                  borderBottomWidth={index === metrics.length - 1 ? '0' : '1px'}
+                  borderColor="whiteAlpha.200"
+                >
+                  <Text as="dt" color="#a69d91" fontSize="xs">
+                    {label}
+                  </Text>
+                  <Text as="dd" m="0" color="#fff9ee" fontFamily="mono" fontSize="sm" textAlign="right" overflowWrap="anywhere">
+                    {value}
+                  </Text>
+                </Flex>
+              ))}
+            </Stack>
+          </Stack>
+
+          <Box
+            ref={stageRef}
+            className="fractal-stage"
+            data-panning={isPanning ? 'true' : undefined}
+            onWheel={handleWheel}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={finishPan}
+            onPointerCancel={finishPan}
+            position="relative"
+            display="grid"
+            placeItems="center"
+            minH={{ base: '320px', lg: '0' }}
+            overflow="hidden"
+            borderWidth="1px"
+            borderColor="whiteAlpha.200"
+            rounded="md"
+            bg="#080909"
+            cursor={isPanning ? 'grabbing' : 'grab'}
+            touchAction="none"
+          >
+            <canvas
+              ref={canvasRef}
+              style={{ transform: `translate(${draftOffset.x}px, ${draftOffset.y}px)` }}
+              aria-label="Rendered Mandelbrot set"
+            />
+            {isRendering && <Box className="render-scrim" aria-hidden="true" />}
+            {error && (
+              <Box position="absolute" right="4" bottom="4" maxW="min(420px, calc(100% - 32px))" px="3" py="2.5" borderWidth="1px" borderColor="rgba(220, 91, 75, 0.5)" rounded="md" bg="rgba(54, 21, 18, 0.92)" color="#ffe2dc" fontSize="sm">
+                {error}
+              </Box>
+            )}
+          </Box>
+        </Grid>
+      </Stack>
+    </Box>
+  );
 };

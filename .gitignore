@@ -13,9 +13,49 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+# Local environment and secret material
 .env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+.aws/
+
+# Local planning, agent instructions, and personal profile context
+/plan.md
+/AGENTS.md
+/curriculum.md
+/.agents/
+/.codex/
+
 googleCloudCLI.sh
 lambda.zip
 bootstrap
+build/
+.tools/
 node_modules/
 /frontend/fractal-app/dist
+
+# Local AWS account inventory can contain account IDs, ARNs, resource names,
+# policies, and topology details. Keep generated reports local.
+/docs/aws-*.md
+
+# Terraform local state and generated files
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform.tfvars
+terraform.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json

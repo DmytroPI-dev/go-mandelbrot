@@ -1,52 +1,52 @@
-/* Reset default styles */
 body {
   margin: 0;
-  padding: 0;
-  background-color: #111;
-  color: white;
-  font-family: sans-serif;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #111315;
 }
 
-/* Use Flexbox to center the main container */
 #root {
-  display: flex;
-  justify-content: center;
-  align-items: center;
   min-height: 100vh;
 }
 
-/* Container for the canvas and UI */
-.fractal-container {
-  position: relative;
-  /* Let the container size be determined by the canvas */
+.fractal-stage {
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.025) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.025) 25%, transparent 25%);
+  background-size: 24px 24px;
 }
 
-/* Style for canvases, which have fixed width/height attributes */
-.fractal-container canvas {
+.fractal-stage canvas {
   display: block;
-  /* Removes extra space below the canvas */
-  border: 1px solid #444;
+  width: min(100%, calc(100vh - 150px));
+  max-width: 100%;
+  aspect-ratio: 1;
+  height: auto;
+  image-rendering: auto;
+  transition: opacity 160ms ease;
+  will-change: transform;
 }
 
-/* UI overlay for controls */
-.ui-overlay {
+.render-scrim {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 10;
-  background-color: rgba(0, 0, 0, 0.6);
-  padding: 10px;
-  border-radius: 8px;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(244, 240, 232, 0.07), transparent);
+  animation: sweep 1.35s infinite;
 }
 
-.ui-overlay button {
-  display: block;
-  margin-bottom: 5px;
-  padding: 8px;
-  width: 100px;
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
 }
 
-.ui-overlay p {
-  margin: 0;
-  font-size: 12px;
+@media (max-width: 900px) {
+  .fractal-stage canvas {
+    width: min(100%, calc(100vh - 190px));
+  }
 }
