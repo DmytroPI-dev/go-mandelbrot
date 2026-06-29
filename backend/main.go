@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"log"
 	"time"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 )
@@ -15,6 +16,16 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 
 	// Parse parameters from the Lambda event's query string.
 	cfg := newConfigFromRequest(request.QueryStringParameters)
+	if err := validateConfig(cfg); err != nil {
+		log.Printf("Invalid render request: %v", err)
+		return events.APIGatewayProxyResponse{
+			StatusCode: 400,
+			Headers: map[string]string{
+				"Content-Type": "text/plain; charset=utf-8",
+			},
+			Body: err.Error(),
+		}, nil
+	}
 	log.Printf("Handling request with config: %+v", cfg)
 
 	// Generate the raw pixel data.
