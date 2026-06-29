@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"strconv"
 	"sync"
@@ -140,7 +139,6 @@ func generateFractalBytes(cfg Config) ([]byte, error) {
 		pixels[idx+3] = 255  // A (fully opaque)
 	}
 
-	log.Println("Finished pixel calculation.")
 	return pixels, nil
 }
 
