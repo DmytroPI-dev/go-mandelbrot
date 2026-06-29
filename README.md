@@ -102,7 +102,8 @@ Frontend deployment is configured as a manual workflow in
 the Terraform-managed S3 bucket, and invalidates CloudFront using GitHub OIDC.
 
 Full Terraform/backend CD is intentionally deferred until Terraform state is
-migrated from local state to a remote backend. See `docs/cicd.md`.
+migrated from local state to an S3 remote backend with S3 lockfile support. See
+`docs/cicd.md`.
 
 ## Deploy
 
@@ -115,6 +116,11 @@ make backend-package
 Initialize and validate Terraform:
 
 ```sh
+make tf-state-init AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-state-plan AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-state-apply AWS_PROFILE=default AWS_REGION=eu-central-1
+make tf-write-backend-config
+make tf-migrate-state
 make tf-init AWS_PROFILE=default AWS_REGION=eu-central-1
 make tf-validate AWS_PROFILE=default AWS_REGION=eu-central-1
 ```
@@ -186,8 +192,8 @@ ongoing AWS usage.
 
 ## Roadmap
 
-- Add remote Terraform state so backend and infrastructure deployment can move
-  safely into GitHub Actions.
+- Add S3 remote Terraform state with S3 lockfile support so backend and
+  infrastructure deployment can move safely into GitHub Actions.
 - Add structured Lambda logs and CloudWatch metrics.
 - Implement distributed tile rendering with an orchestrator and worker Lambda.
 - Add architecture diagram, screenshots, and portfolio write-up.
