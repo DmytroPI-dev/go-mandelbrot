@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	metricNamespace  = "Mandelbrot/Renderer"
-	renderModeSingle = "single"
+	metricNamespace        = "Mandelbrot/Renderer"
+	renderModeSingle       = "single"
+	renderModeWorker       = "worker"
+	renderModeOrchestrator = "orchestrator"
 )
 
 type logFields map[string]any

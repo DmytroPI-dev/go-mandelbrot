@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"log"
+	"os"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -93,6 +95,25 @@ func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 }
 
 func main() {
+	if addr := os.Getenv("MANDELBROT_LOCAL_HTTP_ADDR"); addr != "" {
+		log.Fatal(startLocalHTTPServer(addr))
+	}
+
 	// This is the magic that connects our handler to the Lambda runtime.
-	lambda.Start(handler)
+	switch currentHandlerMode() {
+	case renderModeWorker:
+		lambda.Start(workerHandler)
+	case renderModeOrchestrator:
+		lambda.Start(orchestratorHandler)
+	default:
+		lambda.Start(handler)
+	}
+}
+
+func currentHandlerMode() string {
+	mode := os.Getenv("MANDELBROT_HANDLER_MODE")
+	if mode == "" {
+		return renderModeSingle
+	}
+	return mode
 }

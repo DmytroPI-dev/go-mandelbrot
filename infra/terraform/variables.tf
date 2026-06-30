@@ -58,6 +58,18 @@ variable "lambda_timeout" {
   default     = 60
 }
 
+variable "distributed_lambda_memory_size" {
+  description = "Memory size for distributed renderer orchestrator and worker Lambdas."
+  type        = number
+  default     = 2048
+}
+
+variable "distributed_lambda_timeout" {
+  description = "Timeout in seconds for distributed renderer orchestrator and worker Lambdas."
+  type        = number
+  default     = 60
+}
+
 variable "log_retention_days" {
   description = "CloudWatch log retention for Lambda and API Gateway logs."
   type        = number

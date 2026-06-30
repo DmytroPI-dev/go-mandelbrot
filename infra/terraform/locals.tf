@@ -3,8 +3,10 @@ locals {
 
   frontend_bucket_name = "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
 
-  lambda_function_name = "${local.name_prefix}-renderer"
-  api_name             = "${local.name_prefix}-api"
+  lambda_function_name              = "${local.name_prefix}-renderer"
+  worker_lambda_function_name       = "${local.name_prefix}-worker"
+  orchestrator_lambda_function_name = "${local.name_prefix}-orchestrator"
+  api_name                          = "${local.name_prefix}-api"
 
   api_cors_origins = distinct(concat(
     var.allowed_cors_origins,

@@ -15,9 +15,13 @@ help:
 	@printf "Mandelbrot project commands\n\n"
 	@printf "Build and test:\n"
 	@printf "  make backend-test        Run Go backend tests\n"
+	@printf "  make backend-local       Run local backend HTTP server in single mode\n"
+	@printf "  make backend-local-distributed Run local backend HTTP server in orchestrator mode\n"
+	@printf "  make local-api-smoke     Smoke-test local backend RGBA response\n"
 	@printf "  make backend-build       Build Lambda bootstrap binary\n"
 	@printf "  make backend-package     Build and zip Lambda package\n"
 	@printf "  make frontend-install    Install frontend dependencies\n"
+	@printf "  make frontend-local      Run local Vite frontend against local backend\n"
 	@printf "  make frontend-build      Build frontend assets\n"
 	@printf "  make frontend-lint       Run frontend lint\n\n"
 	@printf "AWS and infra:\n"
@@ -50,6 +54,20 @@ help:
 backend-test:
 	cd $(BACKEND_DIR) && $(GO_BIN) test ./...
 
+.PHONY: backend-local
+backend-local:
+	cd $(BACKEND_DIR) && MANDELBROT_LOCAL_HTTP_ADDR=:8080 MANDELBROT_HANDLER_MODE=single $(GO_BIN) run .
+
+.PHONY: backend-local-distributed
+backend-local-distributed:
+	cd $(BACKEND_DIR) && MANDELBROT_LOCAL_HTTP_ADDR=:8080 MANDELBROT_HANDLER_MODE=orchestrator $(GO_BIN) run .
+
+.PHONY: local-api-smoke
+local-api-smoke:
+	curl -fsS -o /tmp/mandelbrot-local.bin "http://localhost:8080/render?width=32&height_px=32&height=2.5&samples=1&maxIter=50&numBlocks=4&numThreads=2&tileSize=16"
+	test "$$(wc -c < /tmp/mandelbrot-local.bin)" -eq 4096
+	@printf "Local backend returned 4096 RGBA bytes\n"
+
 .PHONY: backend-build
 backend-build:
 	GO_BIN=$(GO_BIN) ./scripts/package-backend.sh --build-only
@@ -61,6 +79,10 @@ backend-package:
 .PHONY: frontend-install
 frontend-install:
 	cd $(FRONTEND_DIR) && npm install
+
+.PHONY: frontend-local
+frontend-local:
+	cd $(FRONTEND_DIR) && VITE_API_URL=http://localhost:8080/render npm run dev -- --host 127.0.0.1
 
 .PHONY: frontend-build
 frontend-build:

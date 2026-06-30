@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"strings"
@@ -20,12 +21,6 @@ func validTestConfig() Config {
 		"numThreads": "1",
 	})
 	return cfg
-}
-
-func resetRandStateForTest() {
-	randMutex.Lock()
-	defer randMutex.Unlock()
-	randState = 1
 }
 
 func TestNewConfigFromRequestDefaults(t *testing.T) {
@@ -211,8 +206,114 @@ func TestPlanWorkItemsCoversEveryPixelOnce(t *testing.T) {
 	}
 }
 
+func TestPlanTilesCoversEveryPixelOnce(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.imgWidth = 7
+	cfg.imgHeight = 5
+	cfg.pixelTotal = cfg.imgWidth * cfg.imgHeight
+
+	tiles := planTiles(cfg, 3)
+	covered := make([][]int, cfg.imgHeight)
+	for y := range covered {
+		covered[y] = make([]int, cfg.imgWidth)
+	}
+
+	for _, tile := range tiles {
+		if err := validateTile(cfg, tile); err != nil {
+			t.Fatalf("validateTile(%+v) returned error: %v", tile, err)
+		}
+		for x := tile.X; x < tile.X+tile.Width; x++ {
+			for y := tile.Y; y < tile.Y+tile.HeightPx; y++ {
+				covered[y][x]++
+			}
+		}
+	}
+
+	for y := 0; y < cfg.imgHeight; y++ {
+		for x := 0; x < cfg.imgWidth; x++ {
+			if covered[y][x] != 1 {
+				t.Fatalf("pixel (%d,%d) covered %d times, want 1", x, y, covered[y][x])
+			}
+		}
+	}
+}
+
+func TestRenderTileBytesReturnsTileRGBABytes(t *testing.T) {
+	cfg := validTestConfig()
+	tile := Tile{X: 1, Y: 2, Width: 3, HeightPx: 2}
+
+	got, err := renderTileBytes(cfg, tile)
+	if err != nil {
+		t.Fatalf("renderTileBytes returned error: %v", err)
+	}
+	if len(got) != tile.Width*tile.HeightPx*4 {
+		t.Fatalf("len(bytes) = %d, want %d", len(got), tile.Width*tile.HeightPx*4)
+	}
+	for i := 3; i < len(got); i += 4 {
+		if got[i] != 255 {
+			t.Fatalf("alpha byte at %d = %d, want 255", i, got[i])
+		}
+	}
+}
+
+func TestAssembledTilesMatchFullRender(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.imgWidth = 9
+	cfg.imgHeight = 7
+	cfg.pixelTotal = cfg.imgWidth * cfg.imgHeight
+	cfg.samples = 3
+	cfg.numBlocks = 5
+	cfg.numThreads = 2
+
+	full, err := generateFractalBytes(cfg)
+	if err != nil {
+		t.Fatalf("generateFractalBytes returned error: %v", err)
+	}
+
+	tiles := planTiles(cfg, 4)
+	results := make([]TileResult, 0, len(tiles))
+	for _, tile := range tiles {
+		tileBytes, err := renderTileBytes(cfg, tile)
+		if err != nil {
+			t.Fatalf("renderTileBytes(%+v) returned error: %v", tile, err)
+		}
+		results = append(results, TileResult{
+			Tile:  tile,
+			Bytes: tileBytes,
+		})
+	}
+
+	assembled, err := assembleTileBytes(cfg, results)
+	if err != nil {
+		t.Fatalf("assembleTileBytes returned error: %v", err)
+	}
+	if !bytes.Equal(assembled, full) {
+		t.Fatal("assembled tile bytes do not match full render bytes")
+	}
+}
+
+func TestAssembleTileBytesRejectsMissingCoverage(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.imgWidth = 4
+	cfg.imgHeight = 4
+	cfg.pixelTotal = cfg.imgWidth * cfg.imgHeight
+
+	tile := Tile{X: 0, Y: 0, Width: 2, HeightPx: 2}
+	tileBytes, err := renderTileBytes(cfg, tile)
+	if err != nil {
+		t.Fatalf("renderTileBytes returned error: %v", err)
+	}
+
+	_, err = assembleTileBytes(cfg, []TileResult{{Tile: tile, Bytes: tileBytes}})
+	if err == nil {
+		t.Fatal("assembleTileBytes returned nil error, want missing coverage error")
+	}
+	if !strings.Contains(err.Error(), "not covered") {
+		t.Fatalf("error = %q, want missing coverage message", err.Error())
+	}
+}
+
 func TestGenerateFractalBytesReturnsRGBABytes(t *testing.T) {
-	resetRandStateForTest()
 	cfg := validTestConfig()
 	cfg.imgWidth = 4
 	cfg.imgHeight = 3
@@ -248,8 +349,6 @@ func TestHandlerRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestHandlerReturnsBase64EncodedRGBABytes(t *testing.T) {
-	resetRandStateForTest()
-
 	resp, err := handler(context.Background(), events.APIGatewayProxyRequest{
 		QueryStringParameters: map[string]string{
 			"width":      "2",

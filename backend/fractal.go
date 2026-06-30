@@ -17,6 +17,10 @@ const (
 	maxSamples        = 64
 	maxBlocks         = 1024
 	maxThreads        = 64
+	minTileSize       = 16
+	defaultTileSize   = 128
+	maxTileSize       = 512
+	maxTileCount      = 144
 )
 
 type Pix struct {
@@ -32,6 +36,18 @@ type WorkItem struct {
 	finalX   int
 	initialY int
 	finalY   int
+}
+
+type Tile struct {
+	X        int `json:"x"`
+	Y        int `json:"y"`
+	Width    int `json:"width"`
+	HeightPx int `json:"heightPx"`
+}
+
+type TileResult struct {
+	Tile  Tile
+	Bytes []byte
 }
 
 type Config struct {
@@ -147,21 +163,7 @@ func workerThread(cfg *Config, wg *sync.WaitGroup, workBuffer <-chan WorkItem, p
 	for workItem := range workBuffer {
 		for x := workItem.initialX; x < workItem.finalX; x++ {
 			for y := workItem.initialY; y < workItem.finalY; y++ {
-				var colorR, colorG, colorB int
-				for k := 0; k < cfg.samples; k++ {
-					a := cfg.height*cfg.ratio*((float64(x)+RandFloat64())/float64(cfg.imgWidth)) + cfg.posX
-					b := cfg.height*((float64(y)+RandFloat64())/float64(cfg.imgHeight)) + cfg.posY
-					c := pixelColor(mandelbrotIteraction(a, b, cfg.maxIter))
-					colorR += int(c.R)
-					colorG += int(c.G)
-					colorB += int(c.B)
-				}
-				pixelBuffer <- Pix{
-					x, y,
-					uint8(float64(colorR) / float64(cfg.samples)),
-					uint8(float64(colorG) / float64(cfg.samples)),
-					uint8(float64(colorB) / float64(cfg.samples)),
-				}
+				pixelBuffer <- renderPixel(*cfg, x, y)
 			}
 		}
 	}
@@ -195,6 +197,148 @@ func planWorkItems(cfg Config) []WorkItem {
 		}
 	}
 	return items
+}
+
+func planTiles(cfg Config, tileSize int) []Tile {
+	if tileSize < 1 {
+		tileSize = 1
+	}
+
+	tiles := make([]Tile, 0, int(math.Ceil(float64(cfg.imgWidth)/float64(tileSize)))*int(math.Ceil(float64(cfg.imgHeight)/float64(tileSize))))
+	for y := 0; y < cfg.imgHeight; y += tileSize {
+		for x := 0; x < cfg.imgWidth; x += tileSize {
+			width := min(tileSize, cfg.imgWidth-x)
+			heightPx := min(tileSize, cfg.imgHeight-y)
+			tiles = append(tiles, Tile{
+				X:        x,
+				Y:        y,
+				Width:    width,
+				HeightPx: heightPx,
+			})
+		}
+	}
+	return tiles
+}
+
+func renderTileBytes(cfg Config, tile Tile) ([]byte, error) {
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+	if err := validateTile(cfg, tile); err != nil {
+		return nil, err
+	}
+
+	bytes := make([]byte, tile.Width*tile.HeightPx*4)
+	for localY := 0; localY < tile.HeightPx; localY++ {
+		for localX := 0; localX < tile.Width; localX++ {
+			p := renderPixel(cfg, tile.X+localX, tile.Y+localY)
+			idx := (localY*tile.Width + localX) * 4
+			bytes[idx] = p.cr
+			bytes[idx+1] = p.cg
+			bytes[idx+2] = p.cb
+			bytes[idx+3] = 255
+		}
+	}
+	return bytes, nil
+}
+
+func assembleTileBytes(cfg Config, results []TileResult) ([]byte, error) {
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	bytes := make([]byte, cfg.imgWidth*cfg.imgHeight*4)
+	covered := make([]bool, cfg.imgWidth*cfg.imgHeight)
+	for _, result := range results {
+		if err := validateTile(cfg, result.Tile); err != nil {
+			return nil, err
+		}
+		wantLen := result.Tile.Width * result.Tile.HeightPx * 4
+		if len(result.Bytes) != wantLen {
+			return nil, fmt.Errorf("tile at (%d,%d) has %d bytes, want %d", result.Tile.X, result.Tile.Y, len(result.Bytes), wantLen)
+		}
+
+		for localY := 0; localY < result.Tile.HeightPx; localY++ {
+			for localX := 0; localX < result.Tile.Width; localX++ {
+				globalX := result.Tile.X + localX
+				globalY := result.Tile.Y + localY
+				pixelIdx := globalY*cfg.imgWidth + globalX
+				if covered[pixelIdx] {
+					return nil, fmt.Errorf("pixel (%d,%d) is covered by more than one tile", globalX, globalY)
+				}
+				covered[pixelIdx] = true
+
+				sourceIdx := (localY*result.Tile.Width + localX) * 4
+				targetIdx := pixelIdx * 4
+				copy(bytes[targetIdx:targetIdx+4], result.Bytes[sourceIdx:sourceIdx+4])
+			}
+		}
+	}
+
+	for idx, isCovered := range covered {
+		if !isCovered {
+			return nil, fmt.Errorf("pixel (%d,%d) is not covered by any tile", idx%cfg.imgWidth, idx/cfg.imgWidth)
+		}
+	}
+
+	return bytes, nil
+}
+
+func validateTile(cfg Config, tile Tile) error {
+	if tile.X < 0 || tile.Y < 0 {
+		return fmt.Errorf("tile origin must be non-negative")
+	}
+	if tile.Width < 1 || tile.HeightPx < 1 {
+		return fmt.Errorf("tile dimensions must be positive")
+	}
+	if tile.X+tile.Width > cfg.imgWidth || tile.Y+tile.HeightPx > cfg.imgHeight {
+		return fmt.Errorf("tile at (%d,%d) with size %dx%d exceeds image bounds %dx%d", tile.X, tile.Y, tile.Width, tile.HeightPx, cfg.imgWidth, cfg.imgHeight)
+	}
+	return nil
+}
+
+func renderPixel(cfg Config, x, y int) Pix {
+	var colorR, colorG, colorB int
+	for k := 0; k < cfg.samples; k++ {
+		offsetX, offsetY := sampleOffsets(x, y, k)
+		a := cfg.height*cfg.ratio*((float64(x)+offsetX)/float64(cfg.imgWidth)) + cfg.posX
+		b := cfg.height*((float64(y)+offsetY)/float64(cfg.imgHeight)) + cfg.posY
+		c := pixelColor(mandelbrotIteraction(a, b, cfg.maxIter))
+		colorR += int(c.R)
+		colorG += int(c.G)
+		colorB += int(c.B)
+	}
+
+	return Pix{
+		x:  x,
+		y:  y,
+		cr: uint8(float64(colorR) / float64(cfg.samples)),
+		cg: uint8(float64(colorG) / float64(cfg.samples)),
+		cb: uint8(float64(colorB) / float64(cfg.samples)),
+	}
+}
+
+func sampleOffsets(x, y, sample int) (float64, float64) {
+	if sample == 0 {
+		return 0.5, 0.5
+	}
+	return deterministicUnitFloat(sampleSeed(x, y, sample, 0)), deterministicUnitFloat(sampleSeed(x, y, sample, 1))
+}
+
+func sampleSeed(x, y, sample, axis int) uint64 {
+	seed := uint64(x+1) * 0x9e3779b185ebca87
+	seed ^= uint64(y+1) * 0xc2b2ae3d27d4eb4f
+	seed ^= uint64(sample+1) * 0x165667b19e3779f9
+	seed ^= uint64(axis+1) * 0x85ebca77c2b2ae63
+	return seed
+}
+
+func deterministicUnitFloat(seed uint64) float64 {
+	seed += 0x9e3779b97f4a7c15
+	seed = (seed ^ (seed >> 30)) * 0xbf58476d1ce4e5b9
+	seed = (seed ^ (seed >> 27)) * 0x94d049bb133111eb
+	seed ^= seed >> 31
+	return float64(seed>>11) * (1.0 / (1 << 53))
 }
 
 func mandelbrotIteraction(a, b float64, maxIter int) (float64, int) {

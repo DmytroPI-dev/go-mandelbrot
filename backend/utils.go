@@ -2,26 +2,7 @@ package main
 
 import (
 	"image/color"
-	"sync"
-	"time"
 )
-
-// xorshift random
-var (
-	randState = uint64(time.Now().UnixNano())
-	randMutex sync.Mutex
-)
-
-func RandUint64() uint64 {
-	randMutex.Lock()
-	defer randMutex.Unlock()
-	randState = ((randState ^ (randState << 13)) ^ (randState >> 7)) ^ (randState << 17)
-	return randState
-}
-
-func RandFloat64() float64 {
-	return float64(RandUint64()/2) / (1 << 63)
-}
 
 func pixelColor(r float64, iter int) color.RGBA {
 	// This function was originally in main.go, moved here for better organization with hslToRGB.

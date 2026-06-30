@@ -176,6 +176,49 @@ ls -lh /tmp/fractal.bin
 
 For `32x32` RGBA output, the file should be `4096` bytes.
 
+After deploying the distributed AWS slice, test the orchestrator endpoint:
+
+```sh
+curl -o /tmp/fractal-distributed.bin \
+  "$(terraform -chdir=infra/terraform output -raw distributed_api_url)?width=32&height_px=32&samples=1&maxIter=50&tileSize=16"
+
+ls -lh /tmp/fractal-distributed.bin
+```
+
+For `32x32` RGBA output, this file should also be `4096` bytes. This endpoint
+uses the orchestrator/worker contract, but true AWS Lambda fan-out through Step
+Functions is still a roadmap item.
+
+## Local E2E
+
+Run the backend locally in orchestrator mode:
+
+```sh
+make backend-local-distributed
+```
+
+In another terminal, smoke-test the local backend:
+
+```sh
+make local-api-smoke
+```
+
+Run the frontend against the local backend:
+
+```sh
+make frontend-local
+```
+
+Then open the Vite URL printed by the command, usually:
+
+```text
+http://127.0.0.1:5173
+```
+
+This exercises the browser, React/Vite frontend, local HTTP bridge, orchestrator
+handler, worker handler, tile assembly, and RGBA canvas rendering. It does not
+exercise AWS Step Functions yet.
+
 Test CORS from the frontend domain:
 
 ```sh
@@ -205,7 +248,8 @@ ongoing AWS usage.
 
 ## Roadmap
 
-- Implement distributed tile rendering with an orchestrator and worker Lambda.
+- Replace local/in-process distributed orchestration with Step Functions Lambda
+  fan-out.
 - Decide whether backend and infrastructure deployment should move into a
   protected GitHub Actions workflow.
 - Add architecture diagram, screenshots, and portfolio write-up.

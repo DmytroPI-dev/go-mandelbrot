@@ -104,6 +104,13 @@ Worker output:
 }
 ```
 
+The Go binary supports this worker path through `MANDELBROT_HANDLER_MODE=worker`.
+Without that environment variable it keeps the current API Gateway render
+handler as the default. Orchestrator mode is available through
+`MANDELBROT_HANDLER_MODE=orchestrator`; it currently calls the worker contract
+in-process and assembles the final RGBA response. Terraform exposes that path
+as `/render-distributed` before Step Functions fan-out is introduced.
+
 For the first implementation, returning tile bytes through Step Functions is
 acceptable only while payloads are small. For larger images, workers should
 write tile objects to S3 and return object keys to avoid Step Functions payload
@@ -187,13 +194,14 @@ before starting Step Functions executions.
 
 ## Implementation Steps
 
-1. Refactor backend render logic so a tile can be rendered independently.
-2. Add tests for tile coordinate mapping and deterministic tile assembly.
-3. Add worker handler mode.
-4. Add orchestrator handler mode.
-5. Add Step Functions, worker Lambda, IAM, and log groups in Terraform.
-6. Keep the current `/render` route on the single-Lambda path.
-7. Add a separate distributed route or `mode=distributed` flag.
-8. Add structured logs and metrics.
-9. Update frontend to optionally request distributed rendering.
-10. Capture architecture diagram and operational screenshots.
+1. Refactor backend render logic so a tile can be rendered independently. Done.
+2. Add tests for tile coordinate mapping and deterministic tile assembly. Done.
+3. Add worker handler mode. Done.
+4. Add orchestrator handler mode. Done.
+5. Add worker/orchestrator Lambda resources, API route, IAM, and log groups in Terraform. Done for the local-orchestrator AWS slice.
+6. Add Step Functions Map state for true Lambda fan-out.
+7. Keep the current `/render` route on the single-Lambda path.
+8. Add a separate distributed route or `mode=distributed` flag. Done: `/render-distributed`.
+9. Add structured logs and metrics.
+10. Update frontend to optionally request distributed rendering.
+11. Capture architecture diagram and operational screenshots.
